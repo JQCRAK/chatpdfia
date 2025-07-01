@@ -14,18 +14,26 @@ class Config:
     MODEL_NAME = os.getenv('MODEL_NAME', 'all-MiniLM-L6-v2')
     MODEL_CACHE_DIR = os.getenv('MODEL_CACHE_DIR', './models')
     
+    # Configuración de Novita AI
+    NOVITA_API_KEY = os.getenv('NOVITA_API_KEY', '')
+    NOVITA_MODEL = os.getenv('NOVITA_MODEL', 'meta-llama/llama-3.2-1b-instruct')
+    
     # Configuración de fragmentación
     DEFAULT_CHUNK_SIZE = int(os.getenv('CHUNK_SIZE', '800'))
     DEFAULT_OVERLAP = int(os.getenv('CHUNK_OVERLAP', '100'))
     MIN_CHUNK_WORDS = int(os.getenv('MIN_CHUNK_WORDS', '10'))
     
-    # Configuración de búsqueda
-    SIMILARITY_THRESHOLD = float(os.getenv('SIMILARITY_THRESHOLD', '0.2'))
-    MAX_SEARCH_RESULTS = int(os.getenv('MAX_SEARCH_RESULTS', '3'))
+    # Configuración de búsqueda (UMBRALES MUY ESTRICTOS - SOLUCIÓN A PROBLEMAS)
+    SIMILARITY_THRESHOLD = float(os.getenv('SIMILARITY_THRESHOLD', '0.75'))  # Incrementado de 0.35 a 0.75
+    MAX_SEARCH_RESULTS = int(os.getenv('MAX_SEARCH_RESULTS', '2'))  # Reducido de 3 a 2
     
-    # Configuración de confianza
-    HIGH_CONFIDENCE_THRESHOLD = float(os.getenv('HIGH_CONFIDENCE', '0.5'))
-    MEDIUM_CONFIDENCE_THRESHOLD = float(os.getenv('MEDIUM_CONFIDENCE', '0.3'))
+    # Configuración de confianza (UMBRALES ESTRICTOS)
+    HIGH_CONFIDENCE_THRESHOLD = float(os.getenv('HIGH_CONFIDENCE', '0.7'))   # Para respuestas seguras
+    MEDIUM_CONFIDENCE_THRESHOLD = float(os.getenv('MEDIUM_CONFIDENCE', '0.6'))  # Umbral medio
+    
+    # Configuración de validación de relevancia
+    WORD_OVERLAP_THRESHOLD = float(os.getenv('WORD_OVERLAP_THRESHOLD', '0.3'))  # 30% palabras en común
+    SEMANTIC_VALIDATION_THRESHOLD = float(os.getenv('SEMANTIC_VALIDATION', '0.6'))  # Validación semántica
     
     # Configuración de PDF
     MIN_PDF_LENGTH = int(os.getenv('MIN_PDF_LENGTH', '100'))

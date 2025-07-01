@@ -7,9 +7,11 @@ import os
 
 # Importar módulos locales
 from extractor_pdf import extract_text_from_pdf, validate_pdf_content
-from fragmentador import create_chunks, get_chunk_statistics
+from fragmentador import create_chunks, get_chunk_statistics, extract_definition_candidates
 from generador_embeddings import generate_embeddings, validate_embeddings
 from motor_busqueda import search_similar_chunks, generate_response, improve_question, process_user_query
+from ai_contextual_chatbot import create_novita_contextual_chatbot, create_mock_contextual_chatbot
+from config import Config
 
 # Configuración de la página
 st.set_page_config(
@@ -220,6 +222,23 @@ def load_css():
     """, unsafe_allow_html=True)
 
 
+def initialize_ai_chatbot():
+    """Inicializa el chatbot AI con Novita AI como primera opción"""
+    if st.session_state.ai_chatbot is None:
+        try:
+            # Intentar usar Novita AI primero
+            api_key = Config.NOVITA_API_KEY or "sk_mRJQJG23UKQk4Z6v-p7BOignQM-3e6huQEaqX7ZRfRo"
+            st.session_state.ai_chatbot = create_novita_contextual_chatbot(
+                api_key, 
+                "meta-llama/llama-3.2-1b-instruct"
+            )
+            print("✅ Novita AI chatbot initialized successfully")
+        except Exception as e:
+            print(f"⚠️ Novita AI failed, using mock: {str(e)}")
+            # Fallback a mock si Novita AI falla
+            st.session_state.ai_chatbot = create_mock_contextual_chatbot()
+
+
 def initialize_session():
     """Inicializa las variables de session state"""
     if 'chat_history' not in st.session_state:
@@ -232,6 +251,17 @@ def initialize_session():
         st.session_state.embeddings = []
     if 'pdf_name' not in st.session_state:
         st.session_state.pdf_name = ""
+    if 'definition_candidates' not in st.session_state:
+        st.session_state.definition_candidates = []
+    if 'definition_embeddings' not in st.session_state:
+        st.session_state.definition_embeddings = []
+    if 'ai_chatbot' not in st.session_state:
+        st.session_state.ai_chatbot = None
+    if 'ai_document_loaded' not in st.session_state:
+        st.session_state.ai_document_loaded = False
+    
+    # Inicializar AI chatbot
+    initialize_ai_chatbot()
 
 
 def display_chat():
@@ -273,16 +303,49 @@ def process_pdf(uploaded_file):
             # Crear chunks
             chunks = create_chunks(text)
             
+            # Extraer candidatos de definición
+            definition_candidates = extract_definition_candidates(text)
+            
             if chunks:
-                # Generar embeddings
+                # Generar embeddings para chunks
                 embeddings = generate_embeddings(chunks)
+                
+                # Generar embeddings para definiciones
+                definition_embeddings = []
+                if definition_candidates:
+                    definition_embeddings = generate_embeddings(definition_candidates)
                 
                 if validate_embeddings(embeddings, len(chunks)):
                     # Guardar en session state
                     st.session_state.chunks = chunks
                     st.session_state.embeddings = embeddings
+                    st.session_state.definition_candidates = definition_candidates
+                    st.session_state.definition_embeddings = definition_embeddings
                     st.session_state.pdf_name = uploaded_file.name
                     st.session_state.pdf_processed = True
+                    
+                    # Cargar documento en el AI chatbot
+                    try:
+                        if st.session_state.ai_chatbot:
+                            print(f"📄 Loading document into AI chatbot (text length: {len(text)})")
+                            ai_load_result = st.session_state.ai_chatbot.load_document(text)
+                            print(f"📄 AI load result: {ai_load_result}")
+                            
+                            if ai_load_result['status'] == 'success':
+                                st.session_state.ai_document_loaded = True
+                                print(f"✅ AI document loaded: {ai_load_result['sections_analyzed']} sections")
+                                
+                                # Test the AI immediately with a simple question
+                                test_result = st.session_state.ai_chatbot.answer_question("¿Qué contiene este documento?")
+                                print(f"🧪 Test AI response: {test_result['answer'][:100]}...")
+                            else:
+                                print(f"⚠️ AI document load failed: {ai_load_result['message']}")
+                                st.session_state.ai_document_loaded = False
+                        else:
+                            print("⚠️ No AI chatbot available")
+                    except Exception as e:
+                        print(f"⚠️ AI document loading error: {str(e)}")
+                        st.session_state.ai_document_loaded = False
                     
                     # Estadísticas
                     stats = get_chunk_statistics(chunks)
@@ -324,7 +387,7 @@ def clear_input():
     """, height=0)
 
 def handle_user_message(user_input):
-    """Procesa el mensaje del usuario y genera respuesta"""
+    """Procesa el mensaje del usuario y genera respuesta usando AI primero, con fallback"""
     # Agregar mensaje del usuario
     st.session_state.chat_history.append({
         'type': 'user',
@@ -332,13 +395,70 @@ def handle_user_message(user_input):
         'timestamp': time.time()
     })
     
-    # Procesar consulta de manera integral
-    with st.spinner("Generando respuesta..."):
-        response = process_user_query(
-            user_input,
-            st.session_state.chunks if st.session_state.pdf_processed else None,
-            st.session_state.embeddings if st.session_state.pdf_processed else None
-        )
+    response = ""
+    
+    # Intentar usar AI chatbot primero si el documento está cargado
+    if st.session_state.pdf_processed and st.session_state.ai_document_loaded and st.session_state.ai_chatbot:
+        with st.spinner("🤖 Analizando con IA avanzada..."):
+            try:
+                ai_result = st.session_state.ai_chatbot.answer_question(user_input)
+                
+                # Verificar si la respuesta es válida (más permisivo)
+                answer_text = ai_result['answer'].strip()
+                
+                # Filtrar solo respuestas claramente inválidas
+                invalid_patterns = [
+                    "por favor, sube un documento pdf primero",
+                    "por favor sube un documento",
+                    "no document loaded",
+                    "mock response",
+                    "testing"
+                ]
+                
+                # Solo detectar respuestas que dicen explícitamente que no hay información
+                no_info_exact = answer_text.lower().strip().endswith("esta información no se encuentra en el documento.")
+                
+                # Si la confianza es muy alta (>0.8), probablemente sea una respuesta válida
+                high_confidence_override = ai_result['confidence'] > 0.8
+                
+                is_valid_response = (
+                    len(answer_text) > 15 and
+                    not any(pattern in answer_text.lower() for pattern in invalid_patterns) and
+                    not answer_text.startswith('{"') and  # No JSON responses
+                    ai_result['confidence'] > 0.15 and  # Even lower threshold
+                    (not no_info_exact or high_confidence_override)  # Allow high confidence responses
+                )
+                
+                if is_valid_response:
+                    # Limpiar emojis y prefijos del AI response
+                    clean_answer = answer_text
+                    for prefix in ["📄 Según el documento:", "📖", "💭 El documento menciona:"]:
+                        clean_answer = clean_answer.replace(prefix, "").strip()
+                    
+                    response = f"🧠 {clean_answer}"
+                    print(f"✅ AI response used (confidence: {ai_result['confidence']:.2f})")
+                else:
+                    print(f"⚠️ AI response filtered out: {answer_text[:100]}... (confidence: {ai_result['confidence']:.2f})")
+                    print(f"   - no_info_exact: {no_info_exact}")
+                    print(f"   - high_confidence_override: {high_confidence_override}")
+                    print(f"   - invalid_patterns match: {any(pattern in answer_text.lower() for pattern in invalid_patterns)}")
+                    response = None
+                    
+            except Exception as e:
+                print(f"⚠️ AI processing error: {str(e)}")
+                response = None
+    
+    # Fallback al sistema original si no hay respuesta AI válida
+    if not response:
+        with st.spinner("Generando respuesta..."):
+            response = process_user_query(
+                user_input,
+                st.session_state.chunks if st.session_state.pdf_processed else None,
+                st.session_state.embeddings if st.session_state.pdf_processed else None,
+                st.session_state.definition_candidates if st.session_state.pdf_processed else None,
+                st.session_state.definition_embeddings if st.session_state.pdf_processed else None
+            )
+            print("📋 Using traditional search method")
     
     # Agregar respuesta de Jahr
     st.session_state.chat_history.append({
@@ -370,12 +490,14 @@ def main():
         
         # Estado del documento o área de subida
         if st.session_state.pdf_processed:
+            ai_status = "🧠 IA Activa" if st.session_state.ai_document_loaded else "📋 Búsqueda Tradicional"
             st.markdown(f"""
             <div class="document-card">
                 <h4>✅ Documento Activo</h4>
                 <div class="document-info">
                     <strong>Archivo:</strong> {st.session_state.pdf_name}<br>
                     <strong>Fragmentos:</strong> {len(st.session_state.chunks)}<br>
+                    <strong>IA:</strong> {ai_status}<br>
                     <strong>Estado:</strong> Listo para consultas
                 </div>
             </div>

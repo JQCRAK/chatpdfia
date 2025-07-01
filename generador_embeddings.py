@@ -9,12 +9,32 @@ from sentence_transformers import SentenceTransformer
 @st.cache_resource
 def load_model():
     """
-    Carga el modelo de SentenceTransformer con cache para optimizar rendimiento
+    Carga el modelo de SentenceTransformer optimizado para español con cache
+    Implementa múltiples fallbacks para garantizar funcionalidad
     
     Returns:
         SentenceTransformer: Modelo cargado
     """
-    return SentenceTransformer('all-MiniLM-L6-v2')
+    models_to_try = [
+        ('paraphrase-multilingual-MiniLM-L12-v2', 'Modelo optimizado para español'),
+        ('distiluse-base-multilingual-cased', 'Modelo multilingüe general'),
+        ('all-MiniLM-L6-v2', 'Modelo base inglés'),
+        ('all-mpnet-base-v2', 'Modelo alternativo')
+    ]
+    
+    for model_name, description in models_to_try:
+        try:
+            st.info(f"Cargando {description}: {model_name}")
+            model = SentenceTransformer(model_name)
+            st.success(f"✅ Modelo cargado exitosamente: {model_name}")
+            return model
+        except Exception as e:
+            st.warning(f"⚠️ No se pudo cargar {model_name}: {str(e)}")
+            continue
+    
+    # Si todos fallan, error crítico
+    st.error("❌ No se pudo cargar ningún modelo de embeddings")
+    raise Exception("No se pudo cargar ningún modelo de SentenceTransformer")
 
 
 def generate_embeddings(chunks):
